@@ -60,12 +60,12 @@ git clone https://github.com/Nassami1/graph-hacks.git
 cd graph-hacks
 
 # 1. install deps (Python 3.10+)
-python -m venv .venv
-source .venv/bin/activate       # Windows: .venv\Scripts\activate
+python3 -m venv .venv             # Windows: python -m venv .venv
+source .venv/bin/activate         # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
 # 2. (optional) copy config
-cp .env.example .env            # Windows: copy .env.example .env
+cp .env.example .env              # Windows: copy .env.example .env
 
 # 3a. run the CLI demo (no browser needed)
 python demo.py "Launch a marketing campaign for product X"
@@ -74,6 +74,10 @@ python demo.py "Launch a marketing campaign for product X"
 python app.py
 # open http://localhost:5000
 ```
+
+> Linux/macOS: use `python3` for creating the venv (many distros ship no `python`
+> command). Once the venv is activated, plain `python` works again.
+> Don't pip-install system-wide (`--break-system-packages`) — PEP 668 blocks it on purpose.
 
 **Windows one-click:** double-click `start.bat` — it creates the venv, installs the
 dependencies and opens the dashboard for you.
