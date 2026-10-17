@@ -1,9 +1,9 @@
-# 🕸️ Multi-Agent Coordination on a Shared Knowledge Graph
+#  Multi-Agent Coordination on a Shared Knowledge Graph
 
 A **Graph Hacks** submission that puts a small team of LLM agents on top of a
 real **FalkorDB** graph. A *Coordinator* reads the graph, breaks a goal into
 subtasks with dependencies, and hands them to two *Workers* that execute in
-parallel — while every decision and result is written back to the graph.
+parallel , while every decision and result is written back to the graph.
 
 The demo covers all three tracks:
 
@@ -45,8 +45,8 @@ arrive as a `▲ N new updates` chip instead.
 
 ## Screenshots
 
-**Mid-campaign** — Wave 1 executing while later waves wait (gray = pending, orange = running,
-green = done; the working agent glows purple):
+**Mid-campaign** , Wave 1 executing while later waves wait (gray = pending, orange = running,
+green = done, the working agent glows purple):
 
 ![Campaign running](docs/midrun.png)
 
@@ -55,10 +55,10 @@ green = done; the working agent glows purple):
 ![Campaign completed](docs/final.png)
 
 The dashboard renders the graph in lanes — **SKILLS → AGENTS → dependency waves →
-CAMPAIGN**, one horizontal lane per campaign — so parallel execution, dependencies and
+CAMPAIGN**, one horizontal lane per campaign , so parallel execution, dependencies and
 past campaigns read at a glance. Older campaigns stay visible but faint.
 
-**Report & deliverables** — a finished campaign links from the log to a summary
+**Report & deliverables** , a finished campaign links from the log to a summary
 report and to previews of every final deliverable (copy / download included):
 
 ![Campaign report](docs/report.png)
