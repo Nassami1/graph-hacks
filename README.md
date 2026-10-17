@@ -5,6 +5,10 @@ real **FalkorDB** graph. A *Coordinator* reads the graph, breaks a goal into
 subtasks with dependencies, and hands them to two *Workers* that execute in
 parallel , while every decision and result is written back to the graph.
 
+ps  > **Contributors Note:** All commits under `@Nassami1` and `@Mar-mir` are by the same author — Hassan Samimi. `@Mar-mir` is used on my virtual machine. This is a solo project.
+
+
+
 The demo covers all three tracks:
 
 | Track | How it's covered |
