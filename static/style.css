@@ -178,3 +178,92 @@ footer {
   font-size: 12px;
   text-align: center;
 }
+
+/* ---------------- log header, actions, "new updates" chip ---------------- */
+.log-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.log-head h2 { margin: 0; }
+.log-actions { display: flex; gap: 6px; }
+.chip-btn {
+  font-size: 11.5px; padding: 4px 10px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--panel); color: var(--text);
+  cursor: pointer;
+}
+.chip-btn:hover:not(:disabled) { border-color: var(--accent); color: #fff; }
+.chip-btn:disabled { opacity: .45; cursor: not-allowed; }
+
+.log-panel { position: relative; }
+.log-chip {
+  position: absolute; left: 50%; transform: translateX(-50%); bottom: 18px;
+  border: 1px solid var(--accent); background: #14203a; color: #cfe0ff;
+  font-size: 11.5px; padding: 5px 13px; border-radius: 999px; cursor: pointer;
+  z-index: 5; box-shadow: 0 4px 14px rgba(0, 0, 0, .45);
+}
+.log-chip:hover { background: #1a2a4d; }
+.hidden { display: none !important; }
+
+/* report / deliverable entries in the log */
+.entry.report { border-left-color: #c9a227; background: #1a2133; }
+.entry-sub { color: var(--muted); font-size: 12px; margin-top: 3px; }
+.link-btn {
+  background: none; border: none; color: var(--accent); cursor: pointer;
+  font-size: 12.5px; padding: 0; text-decoration: underline;
+}
+.link-btn:hover { color: #8fbcff; }
+
+/* ------------------------- report / deliverables modal ------------------- */
+.modal {
+  position: fixed; inset: 0; background: rgba(5, 8, 14, .74);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 50; padding: 24px;
+}
+.modal-box {
+  width: min(860px, 94vw); max-height: 86vh; display: flex; flex-direction: column;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 12px; box-shadow: 0 18px 60px rgba(0, 0, 0, .6); overflow: hidden;
+}
+.modal-head { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--border); }
+.modal-head h3 { margin: 0; font-size: 15px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.modal-actions { display: flex; gap: 6px; }
+.modal-head .x { background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; }
+.modal-head .x:hover { color: #fff; }
+#modalBody { padding: 16px 18px; overflow-y: auto; font-size: 13.5px; line-height: 1.55; }
+
+/* markdown rendering inside the modal (report + deliverable bodies) */
+.md-h { font-size: 15px; font-weight: 600; margin: 15px 0 6px; color: #fff; }
+#modalBody .md-h:first-child { margin-top: 0; }
+.md-h.h2 { font-size: 16px; }
+.md-h.h3 {
+  font-size: 12px; text-transform: uppercase; letter-spacing: .7px;
+  color: var(--purple); border-bottom: 1px solid var(--border); padding-bottom: 4px;
+}
+#modalBody p { margin: 6px 0; }
+#modalBody ul, #modalBody ol { margin: 6px 0; padding-left: 18px; }
+#modalBody li { margin: 3px 0; }
+#modalBody a { color: var(--accent); word-break: break-all; }
+.md-img {
+  max-width: 100%; max-height: 320px; border-radius: 8px;
+  border: 1px solid var(--border); margin-top: 8px; display: block;
+}
+.empty { color: var(--muted); font-style: italic; }
+
+/* deliverable cards */
+.run-meta { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.pill {
+  font-size: 10.5px; padding: 2px 9px; border-radius: 999px;
+  border: 1px solid var(--border); color: var(--muted); font-weight: 400;
+}
+.pill.skill { color: #7fc3ef; border-color: #2c8cc9; }
+.pill.by { color: #d3b6ff; border-color: var(--purple); }
+.deliv-card {
+  border: 1px solid var(--border); background: #12182a;
+  border-radius: 10px; padding: 12px 14px; margin-bottom: 12px;
+}
+.deliv-title { font-weight: 600; font-size: 14px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.deliv-body { margin-top: 8px; }
+.deliv-acts { display: flex; gap: 8px; margin-top: 10px; }
+.mini-btn {
+  font-size: 11.5px; padding: 4px 11px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--panel); color: var(--text); cursor: pointer;
+}
+.mini-btn:hover { border-color: var(--accent); }
+.mini-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }

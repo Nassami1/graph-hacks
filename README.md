@@ -33,6 +33,14 @@ The demo covers all three tracks:
 `Research → (Content ∥ Design) → Launch`, and you can watch the graph nodes
 flip `pending → in_progress → done` in real time.
 
+When the campaign finishes the coordinator also writes a **summary report**
+(overview + every final deliverable) into the graph: the log shows
+*"campaign report ready → open report & downloads"*, and the **Report** /
+**Deliverables** buttons open on-screen previews with **copy** and
+**download** (`report.md`, per-task `.txt`, or everything as one `.md`).
+Reading older log entries no longer snaps back to the top — new updates
+arrive as a `▲ N new updates` chip instead.
+
 ---
 
 ## Screenshots
@@ -49,6 +57,13 @@ green = done; the working agent glows purple):
 The dashboard renders the graph in lanes — **SKILLS → AGENTS → dependency waves →
 CAMPAIGN**, one horizontal lane per campaign — so parallel execution, dependencies and
 past campaigns read at a glance. Older campaigns stay visible but faint.
+
+**Report & deliverables** — a finished campaign links from the log to a summary
+report and to previews of every final deliverable (copy / download included):
+
+![Campaign report](docs/report.png)
+
+![Deliverables preview](docs/deliverables.png)
 
 ---
 

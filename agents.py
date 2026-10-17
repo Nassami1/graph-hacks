@@ -191,6 +191,85 @@ class Worker:
 
 
 # --------------------------------------------------------------------------- #
+# Final campaign report (summary + deliverables)
+# --------------------------------------------------------------------------- #
+def _report_fallback(goal: str, plan: Dict[str, Any], tasks: List[Dict[str, Any]],
+                     done: List[Dict[str, Any]]) -> str:
+    """Deterministic markdown report (used offline or if the LLM call fails)."""
+    team = sorted({t.get("completed_by") or t.get("assigned_to") or "-"
+                   for t in done}) or ["-"]
+    lines = [
+        f"## Campaign report — {goal}", "",
+        "### Overview",
+        f"Plan: {plan.get('summary', '')}",
+        f"Tasks completed: {len(done)}/{len(tasks)} · team: {', '.join(team)}", "",
+        "### Deliverables",
+    ]
+    for t in done:
+        out = " ".join((t.get("output") or "").split())
+        if len(out) > 240:
+            out = out[:239].rstrip() + "…"
+        lines.append(f"- **{t['title']}** ({t.get('skill') or 'general'}, "
+                     f"{t.get('completed_by') or '-'}): {out}")
+    missing = [t for t in tasks if t.get("status") != "done"]
+    if missing:
+        lines += ["", "### Not delivered"]
+        lines += [f"- {t['title']} ({t.get('status')})" for t in missing]
+    lines += [
+        "", "### Next steps",
+        "- Review the deliverables above and approve them for launch.",
+        "- Re-run with a new goal; the graph keeps the company memory of past campaigns.",
+    ]
+    return "\n".join(lines)
+
+
+def _report_with_llm(llm, goal: str, plan: Dict[str, Any],
+                     tasks: List[Dict[str, Any]], done: List[Dict[str, Any]]) -> str:
+    rows = []
+    for t in done:
+        rows.append(f"- {t['title']} (skill: {t.get('skill') or 'general'}, "
+                    f"by {t.get('completed_by') or '-'}):\n"
+                    f"  {t.get('output', '')[:700]}")
+    system = (
+        "You are the Coordinator writing the FINAL campaign report for a "
+        "multi-agent team. Return concise markdown only.\n"
+        "Sections, exactly in this order:\n"
+        "## Campaign report — <goal>\n"
+        "### Overview   (2-3 sentences: what was planned and executed)\n"
+        "### Deliverables   (one bullet per task: **task title** — then the "
+        "ACTUAL concrete artifact quoted from its output: the slogan/headline "
+        "text, the research numbers, the design direction — never 'content done')\n"
+        "### Next steps   (2-3 bullets)\n"
+        "No preamble, no code fences, max 220 words."
+    )
+    user = (f"Goal: {goal}\n\nPlan: {plan.get('summary', '')}\n\n"
+            f"Completed deliverables:\n" + ("\n".join(rows) or "(none)"))
+    text = llm.chat([{"role": "system", "content": system},
+                     {"role": "user", "content": user}],
+                    temperature=0.4, max_tokens=800)
+    if not text.strip():
+        raise ValueError("empty report")
+    if not text.lstrip().startswith("#"):
+        text = "## Campaign report — " + goal + "\n\n" + text
+    return text.strip()
+
+
+def build_report(store, llm, goal: str, run_id: str,
+                 plan: Dict[str, Any]) -> str:
+    """Summary report of the campaign: overview + every final deliverable."""
+    tasks = [t for t in store.list_tasks() if t.get("run_id") == run_id]
+    done = [t for t in tasks if t.get("status") == "done"]
+    if llm.available:
+        try:
+            return _report_with_llm(llm, goal, plan, tasks, done)
+        except Exception as exc:  # noqa: BLE001
+            store.add_event(run_id, "Coordinator",
+                            f"LLM report failed ({exc}); using the fallback report.",
+                            "warn")
+    return _report_fallback(goal, plan, tasks, done)
+
+
+# --------------------------------------------------------------------------- #
 # Scheduler (the "coordination loop")
 # --------------------------------------------------------------------------- #
 def run_campaign(store, llm, goal: str, run_id: Optional[str] = None,
@@ -241,8 +320,17 @@ def run_campaign(store, llm, goal: str, run_id: Optional[str] = None,
                 fut.result()
                 store.set_agent_status(aid, "idle")
 
+    # Final campaign report: overview + deliverables, stored on the Run node
+    # and posted to the log so the UI can show previews & downloads.
+    report = build_report(store, llm, goal, run_id, plan)
+    store.set_run_report(run_id, report)
+    store.add_event(run_id, "Coordinator", report, "report")
     store.set_run_status(run_id, "done")
-    store.add_event(run_id, "Coordinator", f"Campaign «{goal}» completed ✅", "done")
+    done_n = len([t for t in store.list_tasks()
+                  if t.get("run_id") == run_id and t.get("status") == "done"])
+    store.add_event(run_id, "Coordinator",
+                    f"Campaign «{goal}» completed ✅ — {done_n} deliverables "
+                    f"ready · open the report for previews & downloads", "done")
     return run_id
 
 

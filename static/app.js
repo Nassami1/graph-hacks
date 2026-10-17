@@ -475,13 +475,58 @@ function renderGraph(state) {
   }
 }
 
+/* Log is newest-first. Never yank the view back to the top while the user is
+ * reading older entries: only follow new entries when already at the top,
+ * otherwise keep the entry being read anchored and offer a "new updates" chip. */
+let lastLogHTML = null;
+let lastLogCount = 0;
+let newLogCount = 0;
+
+function entryHTML(e) {
+  const who = `<span class="who">${esc(e.agent)}</span>`;
+  if (e.kind === "report") {
+    const preview = esc(plainText(e.message, 170));
+    return `<div class="entry report">${who} — campaign report ready · ` +
+      `<button class="link-btn" data-open="report">open report &amp; downloads</button>` +
+      `<div class="entry-sub">${preview}…</div></div>`;
+  }
+  if (e.kind === "done" && e.message.indexOf("deliverables ready") > -1) {
+    const head = esc(e.message.split("·")[0].trim());
+    return `<div class="entry done">${who} — ${head} · ` +
+      `<button class="link-btn" data-open="deliv">view deliverables</button></div>`;
+  }
+  return `<div class="entry ${esc(e.kind)}">${who} — ${esc(e.message)}</div>`;
+}
+
 function renderLog(events, activeRun) {
   const log = $("log");
   const shown = events.filter((e) => !activeRun || e.run_id === activeRun).slice(-60).reverse();
-  log.innerHTML = shown.map((e) =>
-    `<div class="entry ${esc(e.kind)}"><span class="who">${esc(e.agent)}</span> — ${esc(e.message)}</div>`
-  ).join("");
-  log.scrollTop = 0;
+  const html = shown.map(entryHTML).join("");
+  if (html === lastLogHTML) return;                       // nothing new -> touch nothing
+  const prevTop = log.scrollTop;
+  const prevH = log.scrollHeight;
+  log.innerHTML = html;
+  const count = shown.length;
+  if (lastLogHTML === null || prevTop <= 10) {
+    log.scrollTop = 0;                                    // following the newest entry
+    newLogCount = 0;
+  } else {
+    log.scrollTop = prevTop + (log.scrollHeight - prevH); // keep the entry being read in place
+    newLogCount += Math.max(0, count - lastLogCount);
+  }
+  lastLogHTML = html;
+  lastLogCount = count;
+  updateLogChip();
+}
+
+function updateLogChip() {
+  const chip = $("logChip");
+  if (newLogCount > 0) {
+    chip.textContent = "▲ " + newLogCount + " new update" + (newLogCount > 1 ? "s" : "");
+    chip.classList.remove("hidden");
+  } else {
+    chip.classList.add("hidden");
+  }
 }
 
 function setStatus(kind, text) {
@@ -493,6 +538,7 @@ function setStatus(kind, text) {
 async function refresh() {
   const res = await fetch("/api/state");
   const state = await res.json();
+  lastState = state;
 
   $("backendBadge").textContent = "backend: " + state.backend;
   $("llmBadge").textContent = "llm: " + (state.llm.available
@@ -501,6 +547,10 @@ async function refresh() {
 
   renderGraph(state);
   renderLog(state.events, state.active_run);
+
+  const run = currentRun(state);
+  $("reportBtn").disabled = !(run && run.report);
+  $("delivBtn").disabled = runDeliverables(state, run).length === 0;
 
   const running = state.runs.some((r) => r.status === "running");
   const hasError = state.runs.some((r) => r.status === "error");
@@ -528,6 +578,200 @@ async function resetAll() {
   lastData = ""; lastIds = "";
   await refresh();
 }
+
+/* --------------------------- report & deliverables ------------------------ */
+let lastState = null;
+
+function currentRun(state) {
+  const runs = (state && state.runs) || [];
+  if (!runs.length) return null;
+  const id = (state && state.active_run) ||
+    runs.slice().sort((a, b) => (b.ts || 0) - (a.ts || 0))[0].id;
+  return runs.find((r) => r.id === id) || runs[runs.length - 1];
+}
+
+function runDeliverables(state, run) {
+  if (!state || !run) return [];
+  return state.nodes
+    .filter((n) => String(n.id).startsWith("Task:") && n.run_id === run.id &&
+             n.status === "done" && n.output)
+    .sort((a, b) => (a.priority || 1) - (b.priority || 1) ||
+                    String(a.id).localeCompare(String(b.id)));
+}
+
+const IMG_RE = /https?:\/\/[^\s)"'<]+\.(?:png|jpe?g|webp|gif|svg|avif)(?:\?[^\s)"'<]*)?/i;
+
+/** Escape first, then apply a tiny markdown subset (headings, lists, bold,
+ *  links, images). Tags coming from the content can never execute. */
+function renderMd(md) {
+  const lines = esc(String(md || "")).split(/\r?\n/);
+  const inline = (s) => s
+    .replace(/(^|[^"(=\]])((?:https?:\/\/)[^\s<>"']+)/g,
+             '$1<a href="$2" target="_blank" rel="noopener">$2</a>')
+    .replace(/!\[([^\]]*)\]\((https?:[^)\s]+)\)/g, '<img class="md-img" src="$2" alt="$1">')
+    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
+  let out = "", list = "";
+  const flush = () => { if (list) { out += list === "u" ? "</ul>" : "</ol>"; list = ""; } };
+  for (const raw of lines) {
+    const line = raw.replace(/\s+$/, "");
+    let m;
+    if ((m = line.match(/^(#{1,6})\s+(.*)$/))) {
+      flush();
+      out += `<div class="md-h h${Math.min(m[1].length, 3)}">${inline(m[2])}</div>`;
+    } else if ((m = line.match(/^\s*[-*+]\s+(.*)$/))) {
+      if (list !== "u") { flush(); out += "<ul>"; list = "u"; }
+      out += `<li>${inline(m[1])}</li>`;
+    } else if ((m = line.match(/^\s*\d+[.)]\s+(.*)$/))) {
+      if (list !== "o") { flush(); out += "<ol>"; list = "o"; }
+      out += `<li>${inline(m[1])}</li>`;
+    } else if (line.trim() === "") { flush(); }
+    else { flush(); out += `<p>${inline(line)}</p>`; }
+  }
+  flush();
+  return out;
+}
+
+function openModal(title, bodyHTML, actionsHTML) {
+  $("modalTitle").textContent = title;
+  $("modalBody").innerHTML = bodyHTML;
+  $("modalActions").innerHTML = actionsHTML || "";
+  $("modal").classList.remove("hidden");
+  $("modalBody").scrollTop = 0;
+}
+function closeModal() { $("modal").classList.add("hidden"); }
+
+function openReport() {
+  const run = currentRun(lastState);
+  if (!run || !run.report) {
+    openModal("Campaign report",
+      '<div class="empty">No report yet — it is generated automatically when a campaign finishes.</div>',
+      "");
+    return;
+  }
+  openModal("📊 " + run.goal, renderMd(run.report),
+    `<button class="mini-btn" data-act="copy-report">copy</button>
+     <button class="mini-btn primary" data-act="dl-report">⬇ report.md</button>`);
+}
+
+function openDeliverables() {
+  const run = currentRun(lastState);
+  const tasks = runDeliverables(lastState, run);
+  if (!tasks.length) {
+    openModal("Deliverables",
+      '<div class="empty">No finished deliverables yet — run a campaign first.</div>', "");
+    return;
+  }
+  let html = `<div class="run-meta">
+      <span class="pill">🎯 ${esc(run.goal)}</span>
+      <span class="pill">${tasks.length} deliverables</span>
+      <span class="pill">${esc(run.id)}</span>
+      <span class="pill">${esc(run.status || "")}</span></div>`;
+  for (const t of tasks) {
+    const img = (String(t.output).match(IMG_RE) || [])[0];
+    html += `<div class="deliv-card">
+      <div class="deliv-title">📄 ${esc(t.label || t.id)}
+        <span class="pill skill">${esc(t.skill || "general")}</span>
+        <span class="pill by">${esc(t.completed_by || t.assigned_to || "-")}</span></div>
+      <div class="deliv-body">${renderMd(t.output)}</div>
+      ${img ? `<img class="md-img" src="${esc(img)}" alt="preview" onerror="this.remove()">` : ""}
+      <div class="deliv-acts">
+        <button class="mini-btn" data-act="copy-task" data-id="${esc(t.id)}">copy</button>
+        <button class="mini-btn" data-act="dl-task" data-id="${esc(t.id)}">⬇ .txt</button>
+      </div></div>`;
+  }
+  openModal("📦 Deliverables — " + run.goal, html,
+    `<button class="mini-btn primary" data-act="dl-all">⬇ all as .md</button>`);
+}
+
+/* ---- small utilities: copy / download ---- */
+function safeName(s) {
+  return (String(s || "").replace(/[^\w\-]+/g, "_").replace(/_+/g, "_")
+    .slice(0, 60).replace(/^_+|_+$/g, "")) || "deliverable";
+}
+function downloadFile(name, text) {
+  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+}
+function legacyCopy(text) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand("copy"); } catch (err) { /* ignore */ }
+  ta.remove();
+}
+function copyText(text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).catch(() => legacyCopy(text));
+  } else legacyCopy(text);
+}
+function flash(btn, label) {
+  const old = btn.textContent;
+  btn.textContent = label;
+  setTimeout(() => { btn.textContent = old; }, 1300);
+}
+
+function deliverablesMarkdown(run) {
+  const tasks = runDeliverables(lastState, run);
+  let md = `# ${run.goal}\n\n_run: ${run.id} · ${tasks.length} deliverables_\n\n`;
+  for (const t of tasks) {
+    md += `## ${t.label || t.id}\n_${t.skill || "general"} · ${t.completed_by || t.assigned_to || "-"}_\n\n` +
+          `${t.output}\n\n`;
+  }
+  return md;
+}
+
+function handleAction(e) {
+  const btn = e.target.closest("button[data-act]");
+  if (!btn) return;
+  const run = currentRun(lastState);
+  const act = btn.dataset.act;
+  if (act === "copy-report" && run) { copyText(run.report || ""); flash(btn, "copied ✓"); }
+  else if (act === "dl-report" && run) downloadFile(safeName(run.goal) + "_report.md", run.report || "");
+  else if (act === "copy-task") { copyText(taskById(btn.dataset.id)); flash(btn, "copied ✓"); }
+  else if (act === "dl-task") {
+    const n = lastState && lastState.nodes.find((x) => x.id === btn.dataset.id);
+    if (n) downloadFile(safeName(n.label) + ".txt", n.output || "");
+  } else if (act === "dl-all" && run) {
+    downloadFile(safeName(run.goal) + "_deliverables.md", deliverablesMarkdown(run));
+  }
+}
+function taskById(id) {
+  const n = lastState && lastState.nodes.find((x) => x.id === id);
+  return n ? n.output || "" : "";
+}
+
+/* ---- wiring ---- */
+$("reportBtn").addEventListener("click", openReport);
+$("delivBtn").addEventListener("click", openDeliverables);
+$("modalClose").addEventListener("click", closeModal);
+$("modal").addEventListener("click", (e) => { if (e.target.id === "modal") closeModal(); });
+$("modalActions").addEventListener("click", handleAction);
+$("modalBody").addEventListener("click", handleAction);
+$("log").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-open]");
+  if (!b) return;
+  if (b.dataset.open === "report") openReport();
+  else openDeliverables();
+});
+$("log").addEventListener("scroll", () => {
+  if ($("log").scrollTop <= 10 && newLogCount) { newLogCount = 0; updateLogChip(); }
+});
+$("logChip").addEventListener("click", () => {
+  $("log").scrollTop = 0;
+  newLogCount = 0;
+  updateLogChip();
+});
+window.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
 
 $("runBtn").addEventListener("click", runCampaign);
 $("resetBtn").addEventListener("click", resetAll);

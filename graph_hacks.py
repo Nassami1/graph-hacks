@@ -213,6 +213,10 @@ class GraphStore:
     def add_event(self, run_id: str, agent: str, message: str, kind: str) -> None:
         raise NotImplementedError
 
+    def set_run_report(self, run_id: str, report: str) -> None:
+        """Attach the final campaign report (markdown) to the Run node."""
+        raise NotImplementedError
+
     # ---- reads (normalized, backend-agnostic) ----------------------------- #
     def list_agents(self) -> List[Dict[str, Any]]:
         """Each dict: {id, name, role, status, skills:[...]}."""
@@ -437,6 +441,11 @@ class MemoryStore(GraphStore):
             self._events.append({"run_id": run_id, "agent": agent,
                                  "kind": kind, "message": message, "ts": time.time()})
 
+    def set_run_report(self, run_id, report):
+        with self._lock:
+            if run_id in self._g:
+                self._g.nodes[run_id]["props"]["report"] = report
+
     # ---- reads ------------------------------------------------------------ #
     def list_agents(self):
         with self._lock:
@@ -566,6 +575,10 @@ class FalkorStore(GraphStore):
             {"id": f"evt-{time.time_ns()}", "run_id": run_id, "agent": agent,
              "kind": kind, "message": message, "ts": time.time()},
         )
+
+    def set_run_report(self, run_id, report):
+        self._q("MATCH (r:Run {id: $id}) SET r.report=$report",
+                {"id": run_id, "report": report})
 
     # ---- reads ------------------------------------------------------------ #
     def list_agents(self):
@@ -844,6 +857,85 @@ class Worker:
 
 
 # --------------------------------------------------------------------------- #
+# Final campaign report (summary + deliverables)
+# --------------------------------------------------------------------------- #
+def _report_fallback(goal: str, plan: Dict[str, Any], tasks: List[Dict[str, Any]],
+                     done: List[Dict[str, Any]]) -> str:
+    """Deterministic markdown report (used offline or if the LLM call fails)."""
+    team = sorted({t.get("completed_by") or t.get("assigned_to") or "-"
+                   for t in done}) or ["-"]
+    lines = [
+        f"## Campaign report — {goal}", "",
+        "### Overview",
+        f"Plan: {plan.get('summary', '')}",
+        f"Tasks completed: {len(done)}/{len(tasks)} · team: {', '.join(team)}", "",
+        "### Deliverables",
+    ]
+    for t in done:
+        out = " ".join((t.get("output") or "").split())
+        if len(out) > 240:
+            out = out[:239].rstrip() + "…"
+        lines.append(f"- **{t['title']}** ({t.get('skill') or 'general'}, "
+                     f"{t.get('completed_by') or '-'}): {out}")
+    missing = [t for t in tasks if t.get("status") != "done"]
+    if missing:
+        lines += ["", "### Not delivered"]
+        lines += [f"- {t['title']} ({t.get('status')})" for t in missing]
+    lines += [
+        "", "### Next steps",
+        "- Review the deliverables above and approve them for launch.",
+        "- Re-run with a new goal; the graph keeps the company memory of past campaigns.",
+    ]
+    return "\n".join(lines)
+
+
+def _report_with_llm(llm, goal: str, plan: Dict[str, Any],
+                     tasks: List[Dict[str, Any]], done: List[Dict[str, Any]]) -> str:
+    rows = []
+    for t in done:
+        rows.append(f"- {t['title']} (skill: {t.get('skill') or 'general'}, "
+                    f"by {t.get('completed_by') or '-'}):\n"
+                    f"  {t.get('output', '')[:700]}")
+    system = (
+        "You are the Coordinator writing the FINAL campaign report for a "
+        "multi-agent team. Return concise markdown only.\n"
+        "Sections, exactly in this order:\n"
+        "## Campaign report — <goal>\n"
+        "### Overview   (2-3 sentences: what was planned and executed)\n"
+        "### Deliverables   (one bullet per task: **task title** — then the "
+        "ACTUAL concrete artifact quoted from its output: the slogan/headline "
+        "text, the research numbers, the design direction — never 'content done')\n"
+        "### Next steps   (2-3 bullets)\n"
+        "No preamble, no code fences, max 220 words."
+    )
+    user = (f"Goal: {goal}\n\nPlan: {plan.get('summary', '')}\n\n"
+            f"Completed deliverables:\n" + ("\n".join(rows) or "(none)"))
+    text = llm.chat([{"role": "system", "content": system},
+                     {"role": "user", "content": user}],
+                    temperature=0.4, max_tokens=800)
+    if not text.strip():
+        raise ValueError("empty report")
+    if not text.lstrip().startswith("#"):
+        text = "## Campaign report — " + goal + "\n\n" + text
+    return text.strip()
+
+
+def build_report(store, llm, goal: str, run_id: str,
+                 plan: Dict[str, Any]) -> str:
+    """Summary report of the campaign: overview + every final deliverable."""
+    tasks = [t for t in store.list_tasks() if t.get("run_id") == run_id]
+    done = [t for t in tasks if t.get("status") == "done"]
+    if llm.available:
+        try:
+            return _report_with_llm(llm, goal, plan, tasks, done)
+        except Exception as exc:  # noqa: BLE001
+            store.add_event(run_id, "Coordinator",
+                            f"LLM report failed ({exc}); using the fallback report.",
+                            "warn")
+    return _report_fallback(goal, plan, tasks, done)
+
+
+# --------------------------------------------------------------------------- #
 # Scheduler (the "coordination loop")
 # --------------------------------------------------------------------------- #
 def run_campaign(store, llm, goal: str, run_id: Optional[str] = None,
@@ -894,8 +986,17 @@ def run_campaign(store, llm, goal: str, run_id: Optional[str] = None,
                 fut.result()
                 store.set_agent_status(aid, "idle")
 
+    # Final campaign report: overview + deliverables, stored on the Run node
+    # and posted to the log so the UI can show previews & downloads.
+    report = build_report(store, llm, goal, run_id, plan)
+    store.set_run_report(run_id, report)
+    store.add_event(run_id, "Coordinator", report, "report")
     store.set_run_status(run_id, "done")
-    store.add_event(run_id, "Coordinator", f"Campaign «{goal}» completed ✅", "done")
+    done_n = len([t for t in store.list_tasks()
+                  if t.get("run_id") == run_id and t.get("status") == "done"])
+    store.add_event(run_id, "Coordinator",
+                    f"Campaign «{goal}» completed ✅ — {done_n} deliverables "
+                    f"ready · open the report for previews & downloads", "done")
     return run_id
 
 """Seed the demo graph: team, skills, and one past campaign (company brain).
@@ -1130,6 +1231,95 @@ footer {
   text-align: center;
 }
 
+/* ---------------- log header, actions, "new updates" chip ---------------- */
+.log-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.log-head h2 { margin: 0; }
+.log-actions { display: flex; gap: 6px; }
+.chip-btn {
+  font-size: 11.5px; padding: 4px 10px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--panel); color: var(--text);
+  cursor: pointer;
+}
+.chip-btn:hover:not(:disabled) { border-color: var(--accent); color: #fff; }
+.chip-btn:disabled { opacity: .45; cursor: not-allowed; }
+
+.log-panel { position: relative; }
+.log-chip {
+  position: absolute; left: 50%; transform: translateX(-50%); bottom: 18px;
+  border: 1px solid var(--accent); background: #14203a; color: #cfe0ff;
+  font-size: 11.5px; padding: 5px 13px; border-radius: 999px; cursor: pointer;
+  z-index: 5; box-shadow: 0 4px 14px rgba(0, 0, 0, .45);
+}
+.log-chip:hover { background: #1a2a4d; }
+.hidden { display: none !important; }
+
+/* report / deliverable entries in the log */
+.entry.report { border-left-color: #c9a227; background: #1a2133; }
+.entry-sub { color: var(--muted); font-size: 12px; margin-top: 3px; }
+.link-btn {
+  background: none; border: none; color: var(--accent); cursor: pointer;
+  font-size: 12.5px; padding: 0; text-decoration: underline;
+}
+.link-btn:hover { color: #8fbcff; }
+
+/* ------------------------- report / deliverables modal ------------------- */
+.modal {
+  position: fixed; inset: 0; background: rgba(5, 8, 14, .74);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 50; padding: 24px;
+}
+.modal-box {
+  width: min(860px, 94vw); max-height: 86vh; display: flex; flex-direction: column;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 12px; box-shadow: 0 18px 60px rgba(0, 0, 0, .6); overflow: hidden;
+}
+.modal-head { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--border); }
+.modal-head h3 { margin: 0; font-size: 15px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.modal-actions { display: flex; gap: 6px; }
+.modal-head .x { background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; }
+.modal-head .x:hover { color: #fff; }
+#modalBody { padding: 16px 18px; overflow-y: auto; font-size: 13.5px; line-height: 1.55; }
+
+/* markdown rendering inside the modal (report + deliverable bodies) */
+.md-h { font-size: 15px; font-weight: 600; margin: 15px 0 6px; color: #fff; }
+#modalBody .md-h:first-child { margin-top: 0; }
+.md-h.h2 { font-size: 16px; }
+.md-h.h3 {
+  font-size: 12px; text-transform: uppercase; letter-spacing: .7px;
+  color: var(--purple); border-bottom: 1px solid var(--border); padding-bottom: 4px;
+}
+#modalBody p { margin: 6px 0; }
+#modalBody ul, #modalBody ol { margin: 6px 0; padding-left: 18px; }
+#modalBody li { margin: 3px 0; }
+#modalBody a { color: var(--accent); word-break: break-all; }
+.md-img {
+  max-width: 100%; max-height: 320px; border-radius: 8px;
+  border: 1px solid var(--border); margin-top: 8px; display: block;
+}
+.empty { color: var(--muted); font-style: italic; }
+
+/* deliverable cards */
+.run-meta { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.pill {
+  font-size: 10.5px; padding: 2px 9px; border-radius: 999px;
+  border: 1px solid var(--border); color: var(--muted); font-weight: 400;
+}
+.pill.skill { color: #7fc3ef; border-color: #2c8cc9; }
+.pill.by { color: #d3b6ff; border-color: var(--purple); }
+.deliv-card {
+  border: 1px solid var(--border); background: #12182a;
+  border-radius: 10px; padding: 12px 14px; margin-bottom: 12px;
+}
+.deliv-title { font-weight: 600; font-size: 14px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.deliv-body { margin-top: 8px; }
+.deliv-acts { display: flex; gap: 8px; margin-top: 10px; }
+.mini-btn {
+  font-size: 11.5px; padding: 4px 11px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--panel); color: var(--text); cursor: pointer;
+}
+.mini-btn:hover { border-color: var(--accent); }
+.mini-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+
 </style>
   <script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
 </head>
@@ -1178,12 +1368,30 @@ footer {
     </div>
 
     <div class="panel log-panel">
-      <h2>Coordination log</h2>
+      <div class="log-head">
+        <h2>Coordination log</h2>
+        <div class="log-actions">
+          <button id="reportBtn" class="chip-btn" disabled title="Campaign summary report">📊 Report</button>
+          <button id="delivBtn" class="chip-btn" disabled title="Final deliverables — preview, copy, download">📦 Deliverables</button>
+        </div>
+      </div>
       <div id="log"></div>
+      <button id="logChip" class="log-chip hidden">▲ new updates</button>
     </div>
   </main>
 
   <footer>FalkorDB · Cypher · multi-agent · Graph Hacks demo</footer>
+
+  <div id="modal" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-box">
+      <div class="modal-head">
+        <h3 id="modalTitle">—</h3>
+        <div class="modal-actions" id="modalActions"></div>
+        <button id="modalClose" class="x" title="Close (Esc)">✕</button>
+      </div>
+      <div id="modalBody"></div>
+    </div>
+  </div>
 
   <script>
 /* Frontend: polls /api/state and renders the live graph + coordination log.
@@ -1663,13 +1871,58 @@ function renderGraph(state) {
   }
 }
 
+/* Log is newest-first. Never yank the view back to the top while the user is
+ * reading older entries: only follow new entries when already at the top,
+ * otherwise keep the entry being read anchored and offer a "new updates" chip. */
+let lastLogHTML = null;
+let lastLogCount = 0;
+let newLogCount = 0;
+
+function entryHTML(e) {
+  const who = `<span class="who">${esc(e.agent)}</span>`;
+  if (e.kind === "report") {
+    const preview = esc(plainText(e.message, 170));
+    return `<div class="entry report">${who} — campaign report ready · ` +
+      `<button class="link-btn" data-open="report">open report &amp; downloads</button>` +
+      `<div class="entry-sub">${preview}…</div></div>`;
+  }
+  if (e.kind === "done" && e.message.indexOf("deliverables ready") > -1) {
+    const head = esc(e.message.split("·")[0].trim());
+    return `<div class="entry done">${who} — ${head} · ` +
+      `<button class="link-btn" data-open="deliv">view deliverables</button></div>`;
+  }
+  return `<div class="entry ${esc(e.kind)}">${who} — ${esc(e.message)}</div>`;
+}
+
 function renderLog(events, activeRun) {
   const log = $("log");
   const shown = events.filter((e) => !activeRun || e.run_id === activeRun).slice(-60).reverse();
-  log.innerHTML = shown.map((e) =>
-    `<div class="entry ${esc(e.kind)}"><span class="who">${esc(e.agent)}</span> — ${esc(e.message)}</div>`
-  ).join("");
-  log.scrollTop = 0;
+  const html = shown.map(entryHTML).join("");
+  if (html === lastLogHTML) return;                       // nothing new -> touch nothing
+  const prevTop = log.scrollTop;
+  const prevH = log.scrollHeight;
+  log.innerHTML = html;
+  const count = shown.length;
+  if (lastLogHTML === null || prevTop <= 10) {
+    log.scrollTop = 0;                                    // following the newest entry
+    newLogCount = 0;
+  } else {
+    log.scrollTop = prevTop + (log.scrollHeight - prevH); // keep the entry being read in place
+    newLogCount += Math.max(0, count - lastLogCount);
+  }
+  lastLogHTML = html;
+  lastLogCount = count;
+  updateLogChip();
+}
+
+function updateLogChip() {
+  const chip = $("logChip");
+  if (newLogCount > 0) {
+    chip.textContent = "▲ " + newLogCount + " new update" + (newLogCount > 1 ? "s" : "");
+    chip.classList.remove("hidden");
+  } else {
+    chip.classList.add("hidden");
+  }
 }
 
 function setStatus(kind, text) {
@@ -1681,6 +1934,7 @@ function setStatus(kind, text) {
 async function refresh() {
   const res = await fetch("/api/state");
   const state = await res.json();
+  lastState = state;
 
   $("backendBadge").textContent = "backend: " + state.backend;
   $("llmBadge").textContent = "llm: " + (state.llm.available
@@ -1689,6 +1943,10 @@ async function refresh() {
 
   renderGraph(state);
   renderLog(state.events, state.active_run);
+
+  const run = currentRun(state);
+  $("reportBtn").disabled = !(run && run.report);
+  $("delivBtn").disabled = runDeliverables(state, run).length === 0;
 
   const running = state.runs.some((r) => r.status === "running");
   const hasError = state.runs.some((r) => r.status === "error");
@@ -1716,6 +1974,200 @@ async function resetAll() {
   lastData = ""; lastIds = "";
   await refresh();
 }
+
+/* --------------------------- report & deliverables ------------------------ */
+let lastState = null;
+
+function currentRun(state) {
+  const runs = (state && state.runs) || [];
+  if (!runs.length) return null;
+  const id = (state && state.active_run) ||
+    runs.slice().sort((a, b) => (b.ts || 0) - (a.ts || 0))[0].id;
+  return runs.find((r) => r.id === id) || runs[runs.length - 1];
+}
+
+function runDeliverables(state, run) {
+  if (!state || !run) return [];
+  return state.nodes
+    .filter((n) => String(n.id).startsWith("Task:") && n.run_id === run.id &&
+             n.status === "done" && n.output)
+    .sort((a, b) => (a.priority || 1) - (b.priority || 1) ||
+                    String(a.id).localeCompare(String(b.id)));
+}
+
+const IMG_RE = /https?:\\/\\/[^\\s)"'<]+\\.(?:png|jpe?g|webp|gif|svg|avif)(?:\\?[^\\s)"'<]*)?/i;
+
+/** Escape first, then apply a tiny markdown subset (headings, lists, bold,
+ *  links, images). Tags coming from the content can never execute. */
+function renderMd(md) {
+  const lines = esc(String(md || "")).split(/\\r?\\n/);
+  const inline = (s) => s
+    .replace(/(^|[^"(=\\]])((?:https?:\\/\\/)[^\\s<>"']+)/g,
+             '$1<a href="$2" target="_blank" rel="noopener">$2</a>')
+    .replace(/!\\[([^\\]]*)\\]\\((https?:[^)\\s]+)\\)/g, '<img class="md-img" src="$2" alt="$1">')
+    .replace(/\\[([^\\]]+)\\]\\((https?:[^)\\s]+)\\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+    .replace(/\\*\\*([^*]+)\\*\\*/g, "<strong>$1</strong>")
+    .replace(/(^|[^*])\\*([^*\\n]+)\\*/g, "$1<em>$2</em>");
+  let out = "", list = "";
+  const flush = () => { if (list) { out += list === "u" ? "</ul>" : "</ol>"; list = ""; } };
+  for (const raw of lines) {
+    const line = raw.replace(/\\s+$/, "");
+    let m;
+    if ((m = line.match(/^(#{1,6})\\s+(.*)$/))) {
+      flush();
+      out += `<div class="md-h h${Math.min(m[1].length, 3)}">${inline(m[2])}</div>`;
+    } else if ((m = line.match(/^\\s*[-*+]\\s+(.*)$/))) {
+      if (list !== "u") { flush(); out += "<ul>"; list = "u"; }
+      out += `<li>${inline(m[1])}</li>`;
+    } else if ((m = line.match(/^\\s*\\d+[.)]\\s+(.*)$/))) {
+      if (list !== "o") { flush(); out += "<ol>"; list = "o"; }
+      out += `<li>${inline(m[1])}</li>`;
+    } else if (line.trim() === "") { flush(); }
+    else { flush(); out += `<p>${inline(line)}</p>`; }
+  }
+  flush();
+  return out;
+}
+
+function openModal(title, bodyHTML, actionsHTML) {
+  $("modalTitle").textContent = title;
+  $("modalBody").innerHTML = bodyHTML;
+  $("modalActions").innerHTML = actionsHTML || "";
+  $("modal").classList.remove("hidden");
+  $("modalBody").scrollTop = 0;
+}
+function closeModal() { $("modal").classList.add("hidden"); }
+
+function openReport() {
+  const run = currentRun(lastState);
+  if (!run || !run.report) {
+    openModal("Campaign report",
+      '<div class="empty">No report yet — it is generated automatically when a campaign finishes.</div>',
+      "");
+    return;
+  }
+  openModal("📊 " + run.goal, renderMd(run.report),
+    `<button class="mini-btn" data-act="copy-report">copy</button>
+     <button class="mini-btn primary" data-act="dl-report">⬇ report.md</button>`);
+}
+
+function openDeliverables() {
+  const run = currentRun(lastState);
+  const tasks = runDeliverables(lastState, run);
+  if (!tasks.length) {
+    openModal("Deliverables",
+      '<div class="empty">No finished deliverables yet — run a campaign first.</div>', "");
+    return;
+  }
+  let html = `<div class="run-meta">
+      <span class="pill">🎯 ${esc(run.goal)}</span>
+      <span class="pill">${tasks.length} deliverables</span>
+      <span class="pill">${esc(run.id)}</span>
+      <span class="pill">${esc(run.status || "")}</span></div>`;
+  for (const t of tasks) {
+    const img = (String(t.output).match(IMG_RE) || [])[0];
+    html += `<div class="deliv-card">
+      <div class="deliv-title">📄 ${esc(t.label || t.id)}
+        <span class="pill skill">${esc(t.skill || "general")}</span>
+        <span class="pill by">${esc(t.completed_by || t.assigned_to || "-")}</span></div>
+      <div class="deliv-body">${renderMd(t.output)}</div>
+      ${img ? `<img class="md-img" src="${esc(img)}" alt="preview" onerror="this.remove()">` : ""}
+      <div class="deliv-acts">
+        <button class="mini-btn" data-act="copy-task" data-id="${esc(t.id)}">copy</button>
+        <button class="mini-btn" data-act="dl-task" data-id="${esc(t.id)}">⬇ .txt</button>
+      </div></div>`;
+  }
+  openModal("📦 Deliverables — " + run.goal, html,
+    `<button class="mini-btn primary" data-act="dl-all">⬇ all as .md</button>`);
+}
+
+/* ---- small utilities: copy / download ---- */
+function safeName(s) {
+  return (String(s || "").replace(/[^\\w\\-]+/g, "_").replace(/_+/g, "_")
+    .slice(0, 60).replace(/^_+|_+$/g, "")) || "deliverable";
+}
+function downloadFile(name, text) {
+  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+}
+function legacyCopy(text) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand("copy"); } catch (err) { /* ignore */ }
+  ta.remove();
+}
+function copyText(text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).catch(() => legacyCopy(text));
+  } else legacyCopy(text);
+}
+function flash(btn, label) {
+  const old = btn.textContent;
+  btn.textContent = label;
+  setTimeout(() => { btn.textContent = old; }, 1300);
+}
+
+function deliverablesMarkdown(run) {
+  const tasks = runDeliverables(lastState, run);
+  let md = `# ${run.goal}\\n\\n_run: ${run.id} · ${tasks.length} deliverables_\\n\\n`;
+  for (const t of tasks) {
+    md += `## ${t.label || t.id}\\n_${t.skill || "general"} · ${t.completed_by || t.assigned_to || "-"}_\\n\\n` +
+          `${t.output}\\n\\n`;
+  }
+  return md;
+}
+
+function handleAction(e) {
+  const btn = e.target.closest("button[data-act]");
+  if (!btn) return;
+  const run = currentRun(lastState);
+  const act = btn.dataset.act;
+  if (act === "copy-report" && run) { copyText(run.report || ""); flash(btn, "copied ✓"); }
+  else if (act === "dl-report" && run) downloadFile(safeName(run.goal) + "_report.md", run.report || "");
+  else if (act === "copy-task") { copyText(taskById(btn.dataset.id)); flash(btn, "copied ✓"); }
+  else if (act === "dl-task") {
+    const n = lastState && lastState.nodes.find((x) => x.id === btn.dataset.id);
+    if (n) downloadFile(safeName(n.label) + ".txt", n.output || "");
+  } else if (act === "dl-all" && run) {
+    downloadFile(safeName(run.goal) + "_deliverables.md", deliverablesMarkdown(run));
+  }
+}
+function taskById(id) {
+  const n = lastState && lastState.nodes.find((x) => x.id === id);
+  return n ? n.output || "" : "";
+}
+
+/* ---- wiring ---- */
+$("reportBtn").addEventListener("click", openReport);
+$("delivBtn").addEventListener("click", openDeliverables);
+$("modalClose").addEventListener("click", closeModal);
+$("modal").addEventListener("click", (e) => { if (e.target.id === "modal") closeModal(); });
+$("modalActions").addEventListener("click", handleAction);
+$("modalBody").addEventListener("click", handleAction);
+$("log").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-open]");
+  if (!b) return;
+  if (b.dataset.open === "report") openReport();
+  else openDeliverables();
+});
+$("log").addEventListener("scroll", () => {
+  if ($("log").scrollTop <= 10 && newLogCount) { newLogCount = 0; updateLogChip(); }
+});
+$("logChip").addEventListener("click", () => {
+  $("log").scrollTop = 0;
+  newLogCount = 0;
+  updateLogChip();
+});
+window.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
 
 $("runBtn").addEventListener("click", runCampaign);
 $("resetBtn").addEventListener("click", resetAll);
@@ -1810,8 +2262,13 @@ def _demo(goal: str) -> int:
 
     print("\n=== Coordination log ===")
     for e in store.snapshot()["events"]:
-        if e["run_id"] == run_id:
+        if e["run_id"] == run_id and e["kind"] != "report":
             print(f"[{e['kind']:>6}] {e['agent']:<12} {e['message']}")
+
+    report = next((r.get("report") for r in store.list_runs()
+                   if r["id"] == run_id), "")
+    if report:
+        print("\n=== Campaign report ===\n" + report)
 
     print("\n=== Final tasks ===")
     for t in sorted(store.list_tasks(), key=lambda x: x["priority"]):

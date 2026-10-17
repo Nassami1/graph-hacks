@@ -52,12 +52,30 @@
     </div>
 
     <div class="panel log-panel">
-      <h2>Coordination log</h2>
+      <div class="log-head">
+        <h2>Coordination log</h2>
+        <div class="log-actions">
+          <button id="reportBtn" class="chip-btn" disabled title="Campaign summary report">📊 Report</button>
+          <button id="delivBtn" class="chip-btn" disabled title="Final deliverables — preview, copy, download">📦 Deliverables</button>
+        </div>
+      </div>
       <div id="log"></div>
+      <button id="logChip" class="log-chip hidden">▲ new updates</button>
     </div>
   </main>
 
   <footer>FalkorDB · Cypher · multi-agent · Graph Hacks demo</footer>
+
+  <div id="modal" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-box">
+      <div class="modal-head">
+        <h3 id="modalTitle">—</h3>
+        <div class="modal-actions" id="modalActions"></div>
+        <button id="modalClose" class="x" title="Close (Esc)">✕</button>
+      </div>
+      <div id="modalBody"></div>
+    </div>
+  </div>
 
   <script src="/static/app.js"></script>
 </body>

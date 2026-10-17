@@ -71,6 +71,10 @@ class GraphStore:
     def add_event(self, run_id: str, agent: str, message: str, kind: str) -> None:
         raise NotImplementedError
 
+    def set_run_report(self, run_id: str, report: str) -> None:
+        """Attach the final campaign report (markdown) to the Run node."""
+        raise NotImplementedError
+
     # ---- reads (normalized, backend-agnostic) ----------------------------- #
     def list_agents(self) -> List[Dict[str, Any]]:
         """Each dict: {id, name, role, status, skills:[...]}."""
@@ -295,6 +299,11 @@ class MemoryStore(GraphStore):
             self._events.append({"run_id": run_id, "agent": agent,
                                  "kind": kind, "message": message, "ts": time.time()})
 
+    def set_run_report(self, run_id, report):
+        with self._lock:
+            if run_id in self._g:
+                self._g.nodes[run_id]["props"]["report"] = report
+
     # ---- reads ------------------------------------------------------------ #
     def list_agents(self):
         with self._lock:
@@ -424,6 +433,10 @@ class FalkorStore(GraphStore):
             {"id": f"evt-{time.time_ns()}", "run_id": run_id, "agent": agent,
              "kind": kind, "message": message, "ts": time.time()},
         )
+
+    def set_run_report(self, run_id, report):
+        self._q("MATCH (r:Run {id: $id}) SET r.report=$report",
+                {"id": run_id, "report": report})
 
     # ---- reads ------------------------------------------------------------ #
     def list_agents(self):

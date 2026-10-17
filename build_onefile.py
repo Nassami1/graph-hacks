@@ -177,8 +177,13 @@ def _demo(goal: str) -> int:
 
     print("\\n=== Coordination log ===")
     for e in store.snapshot()["events"]:
-        if e["run_id"] == run_id:
+        if e["run_id"] == run_id and e["kind"] != "report":
             print(f"[{e['kind']:>6}] {e['agent']:<12} {e['message']}")
+
+    report = next((r.get("report") for r in store.list_runs()
+                   if r["id"] == run_id), "")
+    if report:
+        print("\\n=== Campaign report ===\\n" + report)
 
     print("\\n=== Final tasks ===")
     for t in sorted(store.list_tasks(), key=lambda x: x["priority"]):
