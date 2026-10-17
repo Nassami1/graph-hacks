@@ -55,6 +55,10 @@ past campaigns read at a glance. Older campaigns stay visible but faint.
 ## Quick start
 
 ```bash
+# 0. clone
+git clone https://github.com/Nassami1/graph-hacks.git
+cd graph-hacks
+
 # 1. install deps (Python 3.10+)
 python -m venv .venv
 source .venv/bin/activate       # Windows: .venv\Scripts\activate
@@ -70,6 +74,9 @@ python demo.py "Launch a marketing campaign for product X"
 python app.py
 # open http://localhost:5000
 ```
+
+**Windows one-click:** double-click `start.bat` — it creates the venv, installs the
+dependencies and opens the dashboard for you.
 
 ### It works with **zero setup**
 - **No LLM key?** → agents use a deterministic offline fallback (full demo still runs).
