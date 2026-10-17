@@ -1,4 +1,4 @@
-#  Multi-Agent Coordination on a Shared Knowledge Graph
+#  Multi Agent Coordination on a Shared Knowledge Graph
 
 A **Graph Hacks** submission that puts a small team of LLM agents on top of a
 real **FalkorDB** graph. A *Coordinator* reads the graph, breaks a goal into
