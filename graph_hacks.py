@@ -1173,7 +1173,7 @@ footer {
           <span class="lg"><i class="ln ln-part"></i>PART_OF</span>
           <span class="lg"><i class="ln ln-coord"></i>COORDINATES</span>
         </div>
-        <div class="lg-hint">hover a node for details · drag to re-arrange · older campaigns are faint · glowing agent = working</div>
+        <div class="lg-hint">drag anywhere = pan · two-finger swipe / arrows = move · wheel = zoom · glowing agent = working · older campaigns are faint</div>
       </div>
     </div>
 
@@ -1233,16 +1233,43 @@ function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
+/**
+ * Build the hover tooltip. vis-network sets a *string* title with innerText
+ * (raw markup would show as code), so we hand it a real DOM element instead.
+ * Lines are our own markup built from esc()'d user data -> safe to parse.
+ */
 function tip(lines) {
-  return lines.filter(Boolean).map((l) => `<div style="margin:2px 0">${l}</div>`).join("");
+  const el = document.createElement("div");
+  lines.filter(Boolean).forEach((l) => {
+    const d = document.createElement("div");
+    d.style.margin = "2px 0";
+    d.innerHTML = l;
+    el.appendChild(d);
+  });
+  return el;
 }
 function wrapTitle(text, max = 46) {
   const t = String(text || "");
   return t.length > max ? t.slice(0, max - 1).trimEnd() + "…" : t;
 }
+/** Turn a worker's raw markdown/HTML output into plain readable prose. */
+function plainText(raw, max = 560) {
+  let s = String(raw || "");
+  s = s.replace(/<[^>]*>/g, " ");                       // strip HTML tags
+  s = s.replace(/&nbsp;/gi, " ")
+       .replace(/&amp;/gi, "&").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">")
+       .replace(/&quot;/gi, '"').replace(/&#39;/g, "'"); // decode common entities
+  s = s.replace(/\\[([^\\]]*)\\]\\([^)]*\\)/g, "$1");        // [text](url) -> text
+  s = s.replace(/^\\s{0,3}#{1,6}\\s+/gm, "")              // headings
+       .replace(/^\\s{0,3}[-*+]\\s+/gm, "· ")             // bullets
+       .replace(/^\\s{0,3}>\\s?/gm, "")                   // quotes
+       .replace(/\\*\\*|__|~~|`/g, "");                   // emphasis marks
+  s = s.replace(/\\s+/g, " ").trim();
+  return s.length > max ? s.slice(0, max - 1).trimEnd() + "…" : s;
+}
 /** word-wrap into <= maxLines lines of ~max chars (nodes clip long single lines). */
 function wrapLines(text, max = 20, maxLines = 3) {
-  const words = String(text || "").split(/\s+/).filter(Boolean);
+  const words = String(text || "").split(/\\s+/).filter(Boolean);
   const lines = [];
   let cur = "";
   words.forEach((w) => {
@@ -1371,7 +1398,7 @@ function computeLayout(state, manualPos) {
   for (let w = 0; w <= Math.max(maxWave, 0); w++) {
     headers.push({
       id: "hdr:w" + w, x: X.task + w * X.step, y: hdrY,
-      label: "WAVE " + (w + 1) + (w === 0 ? "\nready now" : ""),
+      label: "WAVE " + (w + 1) + (w === 0 ? "\\nready now" : ""),
     });
   }
   headers.push({
@@ -1410,7 +1437,7 @@ function nodeItems(state, pos, headers) {
       items.push({
         id: n.id, x: p.x, y: p.y, shape: "box",
         // busy agents stay PURPLE (orange = running *task* only) but glow
-        label: (busy ? "⚙ " : "") + n.label + "\n" + (n.role || ""),
+        label: (busy ? "⚙ " : "") + n.label + "\\n" + (n.role || ""),
         title: tip([
           `<b>${esc(n.label)}</b> — ${esc(n.role)}`,
           `status: ${esc(n.status)}${busy ? " (working now)" : ""}`,
@@ -1450,7 +1477,7 @@ function nodeItems(state, pos, headers) {
       const st = n.status || "done";
       items.push({
         id: n.id, x: p.x, y: p.y, shape: "database",
-        label: (ICON[st] || "") + " " + wrapLines(n.label, 22, 3).join("\n"),
+        label: (ICON[st] || "") + " " + wrapLines(n.label, 22, 3).join("\\n"),
         title: tip([
           `<b>campaign</b> ${esc(n.label)}`,
           `status: ${esc(st)}`,
@@ -1476,7 +1503,12 @@ function nodeItems(state, pos, headers) {
           n.skill ? `skill: ${esc(n.skill)}` : null,
           n.assigned_to ? `assigned → ${esc(n.assigned_to)}` : null,
           n.completed_by ? `completed by ${esc(n.completed_by)}` : null,
-          n.output ? `<i style="color:#9fb0c8">${esc(wrapTitle(n.output, 140))}</i>` : null,
+          n.output
+            ? `<div style="margin-top:6px"><b style="color:#7d8ba3;font-size:11px;` +
+              `letter-spacing:.4px;text-transform:uppercase">output</b>` +
+              `<div style="max-width:330px;white-space:normal;word-break:break-word;` +
+              `line-height:1.45;color:#aebdd4;margin-top:3px">${esc(plainText(n.output))}</div></div>`
+            : null,
         ]),
         color: { background: st.bg, border: st.border,
                  highlight: { background: st.bg, border: "#fff" } },
@@ -1523,7 +1555,7 @@ function edgeItems(state) {
     items.push({
       id: "assign:" + k,
       from: p.agent, to: p.task,
-      title: esc(p.done ? "ASSIGNED_TO + COMPLETED_BY" : "ASSIGNED_TO"),
+      title: p.done ? "ASSIGNED_TO + COMPLETED_BY" : "ASSIGNED_TO",
       arrows: { to: { enabled: true, scaleFactor: 0.5 } },
       color: { color: base.color.color, opacity: isCurrent ? 0.75 : 0.18 },
       width: base.width,
@@ -1537,7 +1569,7 @@ function edgeItems(state) {
     items.push(Object.assign({
       id: e.from + "|" + e.to + "|" + e.type,
       from: e.from, to: e.to,
-      title: esc(e.type),
+      title: e.type,
       arrows: { to: { enabled: true, scaleFactor: 0.5 } },
     }, s));
   });
@@ -1558,7 +1590,36 @@ const network = new vis.Network($("graph"), { nodes, edges }, {
     selectionWidth: 2,
     hoverWidth: 1.5,
   },
-  interaction: { hover: true, tooltipDelay: 130, dragView: true, zoomView: true },
+  interaction: { hover: true, tooltipDelay: 130, dragView: true, zoomView: true,
+                 dragNodes: false },   // plain drag = PAN everywhere; hold ⌥/Alt to move a node
+});
+
+/* ------------------------------------------------------------------ navigation */
+/* 1) Two-finger / horizontal scroll: vis only zooms on deltaY and ignores
+      deltaX, so a trackpad could never move the view sideways. */
+$("graph").addEventListener("wheel", (e) => {
+  if (e.ctrlKey || Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;  // let vis zoom
+  e.preventDefault();
+  const s = network.getScale();
+  const p = network.getViewPosition();
+  network.moveTo({ position: { x: p.x + e.deltaX / s, y: p.y + e.deltaY / s },
+                   animation: false });
+}, { passive: false });
+
+/* 2) Arrow keys pan, +/- zooms, 0 / f fits everything. */
+window.addEventListener("keydown", (e) => {
+  const tag = (document.activeElement && document.activeElement.tagName) || "";
+  if (tag === "INPUT" || tag === "TEXTAREA") return;
+  const s = network.getScale(), p = network.getViewPosition(), step = 170;
+  const map = { ArrowLeft: [-step, 0], ArrowRight: [step, 0],
+                ArrowUp: [0, -step], ArrowDown: [0, step] };
+  if (map[e.key]) {
+    network.moveTo({ position: { x: p.x + map[e.key][0], y: p.y + map[e.key][1] },
+                     animation: false });
+    e.preventDefault();
+  } else if (e.key === "+" || e.key === "=") { network.zoom(1.15); e.preventDefault(); }
+  else if (e.key === "-" || e.key === "_")  { network.zoom(1 / 1.15); e.preventDefault(); }
+  else if (e.key === "0" || e.key === "f" || e.key === "F") { network.fit({ padding: 70 }); e.preventDefault(); }
 });
 
 let manualPos = {};

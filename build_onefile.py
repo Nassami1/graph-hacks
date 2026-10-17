@@ -73,6 +73,9 @@ def build_index_html() -> str:
     css = (ROOT / "static" / "style.css").read_text(encoding="utf-8")
     js = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
 
+    # The bundle embeds this content inside a regular triple-quoted Python
+    # string, so every backslash must be doubled — otherwise Python would
+    # interpret JS escapes like \n / \t / \b while loading the file.
     html = html.replace(
         '<link rel="stylesheet" href="/static/style.css" />',
         "<style>\n" + css + "\n</style>",
@@ -81,6 +84,7 @@ def build_index_html() -> str:
         '<script src="/static/app.js"></script>',
         "<script>\n" + js + "\n</script>",
     )
+    html = html.replace("\\", "\\\\")
     # safety: a triple-double-quote inside the HTML would break the embedding
     return html.replace('"""', '"\\"\\""')
 
