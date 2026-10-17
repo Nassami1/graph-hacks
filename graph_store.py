@@ -465,25 +465,53 @@ class FalkorStore(GraphStore):
 # --------------------------------------------------------------------------- #
 # Factory
 # --------------------------------------------------------------------------- #
+def _probe(host: str, port: int, timeout: float = 0.6) -> bool:
+    """Cheap TCP reachability check (used to auto-detect a local FalkorDB)."""
+    import socket
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
 def build_store() -> GraphStore:
-    """Build the best available store (FalkorDB if configured & reachable)."""
+    """Build the best available store (FalkorDB if configured & reachable).
+
+    Selection order:
+      1. ``FALKORDB_URL`` / ``FALKORDB_HOST`` explicitly set  -> use it
+         (falls back to in-memory if it is unreachable).
+      2. nothing set -> probe ``localhost:6379`` once; if a FalkorDB is
+         already running there (e.g. the ``docker run`` from the README)
+         it is picked up automatically, so judges never end up on the
+         in-memory fallback just because ``.env`` was missing.
+      3. otherwise -> in-memory NetworkX graph.
+    """
     url = os.getenv("FALKORDB_URL", "").strip()
     host = os.getenv("FALKORDB_HOST", "").strip()
+    port = int(os.getenv("FALKORDB_PORT", "6379"))
 
-    if url or host:
-        try:
-            store = FalkorStore(
-                url=url or None,
-                host=host or "localhost",
-                port=int(os.getenv("FALKORDB_PORT", "6379")),
-                username=os.getenv("FALKORDB_USERNAME", "").strip() or None,
-                password=os.getenv("FALKORDB_PASSWORD", "").strip() or None,
-            )
-            store.graph.query("RETURN 1")  # connectivity check
-            return store
-        except Exception as exc:  # noqa: BLE001
-            print(f"[graph_store] FalkorDB unreachable ({exc}); "
-                  f"falling back to in-memory graph", file=sys.stderr)
+    if not url and not host:
+        if _probe("localhost", port):
+            host = "localhost"
+            print("[graph_store] auto-detected FalkorDB on localhost:%d" % port,
+                  file=sys.stderr)
+        else:
+            return MemoryStore()
+
+    try:
+        store = FalkorStore(
+            url=url or None,
+            host=host or "localhost",
+            port=port,
+            username=os.getenv("FALKORDB_USERNAME", "").strip() or None,
+            password=os.getenv("FALKORDB_PASSWORD", "").strip() or None,
+        )
+        store.graph.query("RETURN 1")  # connectivity check
+        return store
+    except Exception as exc:  # noqa: BLE001
+        print(f"[graph_store] FalkorDB unreachable ({exc}); "
+              f"falling back to in-memory graph", file=sys.stderr)
     return MemoryStore()
 
 

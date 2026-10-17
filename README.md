@@ -35,16 +35,33 @@ flip `pending → in_progress → done` in real time.
 
 ---
 
+## Screenshots
+
+**Mid-campaign** — Wave 1 executing while later waves wait (gray = pending, orange = running,
+green = done; the working agent glows purple):
+
+![Campaign running](docs/midrun.png)
+
+**Completed** — every task flipped to `done` and the campaign persists as a `Run` node:
+
+![Campaign completed](docs/final.png)
+
+The dashboard renders the graph in lanes — **SKILLS → AGENTS → dependency waves →
+CAMPAIGN**, one horizontal lane per campaign — so parallel execution, dependencies and
+past campaigns read at a glance. Older campaigns stay visible but faint.
+
+---
+
 ## Quick start
 
 ```bash
 # 1. install deps (Python 3.10+)
 python -m venv .venv
-.venv\Scripts\activate          # Windows
+source .venv/bin/activate       # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
 # 2. (optional) copy config
-copy .env.example .env
+cp .env.example .env            # Windows: copy .env.example .env
 
 # 3a. run the CLI demo (no browser needed)
 python demo.py "Launch a marketing campaign for product X"
@@ -56,7 +73,8 @@ python app.py
 
 ### It works with **zero setup**
 - **No LLM key?** → agents use a deterministic offline fallback (full demo still runs).
-- **No Docker / FalkorDB?** → an in-memory NetworkX graph is used automatically.
+- **No Docker / FalkorDB?** → an in-memory NetworkX graph is used automatically
+  (a local FalkorDB on `localhost:6379` is detected without any config).
 
 ### To use the real FalkorDB (for judging)
 

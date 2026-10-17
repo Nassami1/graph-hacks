@@ -99,24 +99,50 @@ main {
   position: absolute;
   bottom: 12px;
   left: 12px;
+  right: 12px;
   display: flex;
-  gap: 12px;
+  gap: 18px;
   flex-wrap: wrap;
-  background: rgba(23, 29, 43, 0.9);
-  padding: 8px 12px;
-  border-radius: 8px;
+  align-items: center;
+  background: rgba(17, 22, 34, 0.92);
+  padding: 8px 14px;
+  border-radius: 10px;
   border: 1px solid var(--border);
-  font-size: 12px;
+  font-size: 11.5px;
   color: var(--muted);
+  pointer-events: none;
 }
-.lg { display: inline-flex; align-items: center; gap: 6px; }
-.dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
-.dot.agent { background: var(--purple); }
-.dot.task-pending { background: #5b6472; }
-.dot.task-active { background: var(--orange); }
-.dot.task-done { background: var(--green); }
-.dot.skill { background: #2c8cc9; }
-.dot.run { background: #c94f6d; }
+.lg-group { display: inline-flex; align-items: center; gap: 11px; flex-wrap: wrap; }
+.lg-title {
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  font-size: 10px;
+  color: #5b6577;
+  border-right: 1px solid var(--border);
+  padding-right: 10px;
+}
+.lg { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.lg-hint { font-size: 10.5px; color: #97a2b4; margin-left: auto; font-style: italic; }
+
+/* node swatches (shapes match the graph) */
+.sh { display: inline-block; width: 13px; height: 13px; flex: 0 0 auto; }
+.sh-agent    { background: var(--purple); border: 1px solid #fff; border-radius: 2px; }
+.sh-agent-busy { background: var(--purple); border: 2px solid #fff; border-radius: 2px;
+                 box-shadow: 0 0 7px 1px rgba(160,107,255,.95); }
+.sh-skill    { background: #2c8cc9; clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%); }
+.sh-pending  { background: #39415a; border: 1px solid #626d8a; border-radius: 2px; }
+.sh-active   { background: #f0a12a; border: 1px solid #ffd489; border-radius: 2px; }
+.sh-done     { background: #2fbf71; border: 1px solid #9df0c4; border-radius: 2px; }
+.sh-run      { background: #c94f6d; border: 1px solid #fff; border-radius: 50% / 30%; }
+
+/* edge swatches */
+.ln { display: inline-block; width: 24px; height: 0; border-top-width: 2px; flex: 0 0 auto; }
+.ln-depends  { border-top: 2px dashed #93a3ba; }
+.ln-assigned { border-top: 2px solid #f0a12a; }
+.ln-completed{ border-top: 2px solid #2fbf71; }
+.ln-skill    { border-top: 2px solid rgba(62, 163, 221, .8); }
+.ln-part     { border-top: 2px dotted #7b8699; }
+.ln-coord    { border-top: 2px dashed #a06bff; }
 
 .log-panel {
   display: flex;

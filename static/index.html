@@ -22,18 +22,32 @@
            placeholder="e.g. Launch a marketing campaign for product X" />
     <button id="runBtn" class="btn primary">▶ Run campaign</button>
     <button id="resetBtn" class="btn">↺ Reset</button>
+    <button id="fitBtn" class="btn" title="Zoom to fit the whole graph">⤢ Fit</button>
   </section>
 
   <main>
     <div class="panel graph-panel">
       <div id="graph"></div>
       <div class="legend">
-        <span class="lg"><i class="dot agent"></i>Agent</span>
-        <span class="lg"><i class="dot task-pending"></i>Task pending</span>
-        <span class="lg"><i class="dot task-active"></i>Task running</span>
-        <span class="lg"><i class="dot task-done"></i>Task done</span>
-        <span class="lg"><i class="dot skill"></i>Skill</span>
-        <span class="lg"><i class="dot run"></i>Campaign</span>
+        <div class="lg-group">
+          <span class="lg-title">nodes</span>
+          <span class="lg"><i class="sh sh-agent"></i>Agent</span>
+          <span class="lg"><i class="sh sh-agent-busy"></i>Agent working</span>
+          <span class="lg"><i class="sh sh-skill"></i>Skill</span>
+          <span class="lg"><i class="sh sh-pending"></i>Task pending</span>
+          <span class="lg"><i class="sh sh-active"></i>Task running</span>
+          <span class="lg"><i class="sh sh-done"></i>Task done</span>
+          <span class="lg"><i class="sh sh-run"></i>Campaign (Run)</span>
+        </div>
+        <div class="lg-group">
+          <span class="lg-title">edges</span>
+          <span class="lg"><i class="ln ln-depends"></i>DEPENDS_ON</span>
+          <span class="lg"><i class="ln ln-assigned"></i>ASSIGNED_TO → COMPLETED_BY (green = done)</span>
+          <span class="lg"><i class="ln ln-skill"></i>HAS_SKILL</span>
+          <span class="lg"><i class="ln ln-part"></i>PART_OF</span>
+          <span class="lg"><i class="ln ln-coord"></i>COORDINATES</span>
+        </div>
+        <div class="lg-hint">hover a node for details · drag to re-arrange · older campaigns are faint · glowing agent = working</div>
       </div>
     </div>
 
