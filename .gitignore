@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+.vscode/
+desktop.ini
+*.code-workspace

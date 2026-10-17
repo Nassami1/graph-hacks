@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Graph Hacks — Multi-Agent Coordination</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
+</head>
+<body>
+  <header>
+    <h1>🕸️ Multi-Agent Coordination <span>on a shared knowledge graph</span></h1>
+    <div class="badges">
+      <span id="backendBadge" class="badge">backend: …</span>
+      <span id="llmBadge" class="badge">llm: …</span>
+      <span id="statusBadge" class="badge badge-idle">idle</span>
+    </div>
+  </header>
+
+  <section class="controls">
+    <input id="goal" type="text"
+           placeholder="e.g. Launch a marketing campaign for product X" />
+    <button id="runBtn" class="btn primary">▶ Run campaign</button>
+    <button id="resetBtn" class="btn">↺ Reset</button>
+  </section>
+
+  <main>
+    <div class="panel graph-panel">
+      <div id="graph"></div>
+      <div class="legend">
+        <span class="lg"><i class="dot agent"></i>Agent</span>
+        <span class="lg"><i class="dot task-pending"></i>Task pending</span>
+        <span class="lg"><i class="dot task-active"></i>Task running</span>
+        <span class="lg"><i class="dot task-done"></i>Task done</span>
+        <span class="lg"><i class="dot skill"></i>Skill</span>
+        <span class="lg"><i class="dot run"></i>Campaign</span>
+      </div>
+    </div>
+
+    <div class="panel log-panel">
+      <h2>Coordination log</h2>
+      <div id="log"></div>
+    </div>
+  </main>
+
+  <footer>FalkorDB · Cypher · multi-agent · Graph Hacks demo</footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
